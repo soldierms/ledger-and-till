@@ -1316,8 +1316,8 @@
     if (e.target===this){ this.hidden = true; document.getElementById('receiptViewerImg').src = ''; }
   });
 
-  ['fSearch','fAccount','fType','fCategory'].forEach(function(id){
-    document.getElementById(id).addEventListener('input', renderLedger);
+  document.getElementById('fSearch').addEventListener('input', renderLedger);
+  ['fAccount','fType','fCategory'].forEach(function(id){
     document.getElementById(id).addEventListener('change', renderLedger);
   });
   document.getElementById('btnClearFilters').addEventListener('click', function(){
