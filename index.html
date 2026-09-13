@@ -275,10 +275,17 @@
 
   footer.hint{ text-align:center; color:var(--ink-faint); font-size:11.5px; padding:20px 0 6px; }
 
+  .print-title{ display:none; }
+  .print-title h2{ font-size:18px; margin:0 0 4px; font-family:'Lora',serif; }
+  .print-title .meta{ font-size:12px; color:var(--ink-soft); }
+
   @media print{
     header.topbar, .no-print{ display:none !important; }
     body{ background:#fff; color:#000; }
     .card, .tile{ box-shadow:none; border:1px solid #999; }
+    .print-title{ display:block; margin-bottom:14px; }
+    .print-title .meta{ color:#555; }
+    .col-actions{ display:none !important; }
   }
 </style>
 </head>
@@ -334,16 +341,18 @@
   <section class="view" id="view-ledger" hidden>
     <div class="card">
       <div class="card-head"><h2>Transactions</h2></div>
-      <div class="toolbar" style="margin-bottom:14px;">
+      <div class="toolbar no-print" style="margin-bottom:14px;">
         <div class="field"><label>Search</label><input type="text" id="fSearch" placeholder="merchant or note"></div>
         <div class="field"><label>Account</label><select id="fAccount"><option value="">All</option><option value="bank">Current</option><option value="savings">Savings</option><option value="cash">Cash</option></select></div>
         <div class="field"><label>Type</label><select id="fType"><option value="">All</option><option value="income">Income</option><option value="expense">Expense</option><option value="transfer">Transfer</option></select></div>
         <div class="field"><label>Category</label><select id="fCategory"><option value="">All</option></select></div>
         <button class="btn btn-ghost btn-sm" id="btnClearFilters" style="align-self:flex-end;">Clear filters</button>
+        <button class="btn btn-sm" id="btnPrintLedger" style="align-self:flex-end;">Print</button>
       </div>
+      <div class="print-title" id="ledgerPrintTitle"></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Account</th><th style="text-align:right;">Amount</th><th></th></tr></thead>
+          <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Account</th><th style="text-align:right;">Amount</th><th class="col-actions"></th></tr></thead>
           <tbody id="ledgerBody"></tbody>
         </table>
       </div>
@@ -979,7 +988,7 @@
     var cat = t.type==='transfer' ? '<span class="faint">Transfer</span>' : esc(t.category||'Uncategorized');
     var chips = (t.example ? '<span class="chip example">Example</span>' : '') + (rec ? '<span class="chip">↻ Recurring</span>' : '') + (anomaly ? '<span class="chip warn">⚠ Unusual</span>' : '') +
       (t.receiptPhoto ? '<button type="button" class="receipt-chip-btn" data-view-receipt="'+t.id+'">📷 Receipt</button>' : '');
-    var actions = withActions ? '<td class="row-actions"><button class="icon-btn" data-edit="'+t.id+'" title="Edit">✎</button><button class="icon-btn" data-del="'+t.id+'" title="Delete">✕</button></td>' : '<td></td>';
+    var actions = withActions ? '<td class="row-actions col-actions"><button class="icon-btn" data-edit="'+t.id+'" title="Edit">✎</button><button class="icon-btn" data-del="'+t.id+'" title="Delete">✕</button></td>' : '<td class="col-actions"></td>';
     return '<tr><td class="num">'+t.date+'</td><td><span class="desc-main">'+desc+'</span>'+chips+sub+'</td><td>'+cat+'</td><td>'+acct+'</td>'+
       '<td class="amt num '+amtCls+'">'+sign+fmtMoney(t.amount)+'</td>'+actions+'</tr>';
   }
@@ -1006,6 +1015,21 @@
 
     document.getElementById('ledgerBody').innerHTML = list.map(function(t){ return txRow(t, recurring, true); }).join('');
     document.getElementById('ledgerEmpty').hidden = list.length>0;
+
+    var scopeParts = [];
+    if (accF) scopeParts.push(accLabel(accF));
+    if (typeF) scopeParts.push(typeF.charAt(0).toUpperCase()+typeF.slice(1));
+    if (catF) scopeParts.push(catF);
+    if (search) scopeParts.push('"'+search+'"');
+    var scope = scopeParts.length ? scopeParts.join(' · ') : 'All Transactions';
+    var totalIn = 0, totalOut = 0;
+    list.forEach(function(t){ if (t.type==='income') totalIn += t.amount; else if (t.type==='expense') totalOut += t.amount; });
+    var summaryBits = [list.length + (list.length===1?' transaction':' transactions')];
+    if (totalIn) summaryBits.push('total in '+fmtMoney(totalIn));
+    if (totalOut) summaryBits.push('total out '+fmtMoney(totalOut));
+    if (totalIn || totalOut) summaryBits.push('net '+fmtMoney(totalIn-totalOut));
+    document.getElementById('ledgerPrintTitle').innerHTML =
+      '<h2>Ledger &amp; Till — '+esc(scope)+'</h2><div class="meta">Printed '+esc(todayISO())+' · '+esc(summaryBits.join(' · '))+'</div>';
   }
 
   /* ---- budgets ---- */
@@ -1300,6 +1324,7 @@
     document.getElementById('fSearch').value=''; document.getElementById('fAccount').value=''; document.getElementById('fType').value=''; document.getElementById('fCategory').value='';
     renderLedger();
   });
+  document.getElementById('btnPrintLedger').addEventListener('click', function(){ window.print(); });
 
   document.getElementById('btnClearExamples').addEventListener('click', function(){ clearExamples(); });
 
