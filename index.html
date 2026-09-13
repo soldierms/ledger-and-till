@@ -289,7 +289,7 @@
     <div class="brand-row">
       <div class="brand">
         <h1>Ledger &amp; Till</h1>
-        <span class="tag">bank + cash, kept in balance</span>
+        <span class="tag">current, savings &amp; cash, kept in balance</span>
       </div>
       <div style="display:flex; gap:10px; align-items:center;">
         <span class="sync-pill" id="syncPill"><span class="sync-dot" id="syncDot"></span><span id="syncLabel">Connecting…</span></span>
@@ -336,7 +336,7 @@
       <div class="card-head"><h2>Transactions</h2></div>
       <div class="toolbar" style="margin-bottom:14px;">
         <div class="field"><label>Search</label><input type="text" id="fSearch" placeholder="merchant or note"></div>
-        <div class="field"><label>Account</label><select id="fAccount"><option value="">All</option><option value="bank">Bank</option><option value="cash">Cash</option></select></div>
+        <div class="field"><label>Account</label><select id="fAccount"><option value="">All</option><option value="bank">Current</option><option value="savings">Savings</option><option value="cash">Cash</option></select></div>
         <div class="field"><label>Type</label><select id="fType"><option value="">All</option><option value="income">Income</option><option value="expense">Expense</option><option value="transfer">Transfer</option></select></div>
         <div class="field"><label>Category</label><select id="fCategory"><option value="">All</option></select></div>
         <button class="btn btn-ghost btn-sm" id="btnClearFilters" style="align-self:flex-end;">Clear filters</button>
@@ -399,8 +399,10 @@
     <div class="card">
       <div class="card-head"><h3>Accounts &amp; opening balances</h3></div>
       <form class="form-grid" id="formAccounts">
-        <div class="field"><label>Bank account name</label><input type="text" id="accBankName"></div>
-        <div class="field"><label>Bank opening balance</label><input type="number" step="0.01" id="accBankOpening"></div>
+        <div class="field"><label>Current account name</label><input type="text" id="accBankName"></div>
+        <div class="field"><label>Current opening balance</label><input type="number" step="0.01" id="accBankOpening"></div>
+        <div class="field"><label>Savings account name</label><input type="text" id="accSavingsName"></div>
+        <div class="field"><label>Savings opening balance</label><input type="number" step="0.01" id="accSavingsOpening"></div>
         <div class="field"><label>Cash account name</label><input type="text" id="accCashName"></div>
         <div class="field"><label>Cash opening balance</label><input type="number" step="0.01" id="accCashOpening"></div>
         <div class="span2"><button class="btn btn-primary btn-sm" type="submit">Save accounts</button></div>
@@ -440,14 +442,14 @@
         <div class="field"><label>Amount</label><input type="number" step="0.01" min="0.01" id="txAmount" required></div>
 
         <div class="field span2" id="txAccountWrap"><label>Account</label>
-          <select id="txAccount"><option value="bank">Bank</option><option value="cash">Cash</option></select>
+          <select id="txAccount"><option value="bank">Current</option><option value="savings">Savings</option><option value="cash">Cash</option></select>
         </div>
 
         <div class="field" id="txFromWrap" hidden><label>From</label>
-          <select id="txFrom"><option value="bank">Bank</option><option value="cash">Cash</option></select>
+          <select id="txFrom"><option value="bank">Current</option><option value="savings">Savings</option><option value="cash">Cash</option></select>
         </div>
         <div class="field" id="txToWrap" hidden><label>To</label>
-          <select id="txTo"><option value="cash">Cash</option><option value="bank">Bank</option></select>
+          <select id="txTo"><option value="cash">Cash</option><option value="bank">Current</option><option value="savings">Savings</option></select>
         </div>
 
         <div class="field span2" id="txMerchantWrap"><label>Merchant / note</label>
@@ -562,7 +564,7 @@
   var db = null, downloadsCap = null;
   var usingLocal = false;
   var cache = {
-    accounts: { bank:{ name:'Bank Account', opening:0 }, cash:{ name:'Cash on Hand', opening:0 } },
+    accounts: { bank:{ name:'Current Account', opening:0 }, savings:{ name:'Savings Account', opening:0 }, cash:{ name:'Cash on Hand', opening:0 } },
     categories: JSON.parse(JSON.stringify(DEFAULT_CATEGORIES)),
     buckets: JSON.parse(JSON.stringify(DEFAULT_BUCKETS)),
     rules: { keywordMap: {} },
@@ -596,13 +598,14 @@
       { id: uid(), example:true, date: iso(1,0), type:'expense', account:'bank', category:'Rent', amount:1100, merchant:'Landlord', note:'September rent', createdAt: Date.now()-4e9 },
       { id: uid(), example:true, date: iso(3,0), type:'expense', account:'cash', category:'Groceries', amount:54.20, merchant:'Whole Foods', note:'', createdAt: Date.now()-3e9 },
       { id: uid(), example:true, date: iso(4,0), type:'transfer', account:null, fromAccount:'bank', toAccount:'cash', category:null, amount:200, merchant:'ATM withdrawal', note:'', createdAt: Date.now()-2e9 },
+      { id: uid(), example:true, date: iso(2,0), type:'transfer', account:null, fromAccount:'bank', toAccount:'savings', category:null, amount:300, merchant:'Monthly savings transfer', note:'', createdAt: Date.now()-2.5e9 },
       { id: uid(), example:true, date: iso(5,0), type:'expense', account:'cash', category:'Dining Out', amount:32.50, merchant:'Cafe Luna', note:'', createdAt: Date.now()-1e9 },
       { id: uid(), example:true, date: iso(5,0), type:'expense', account:'bank', category:'Transportation', amount:15.99, merchant:'Uber', note:'', createdAt: Date.now()-0.5e9 }
     ];
   }
   var EXAMPLE_BUDGETS = { Rent:1100, Groceries:400, 'Dining Out':150, Subscriptions:30 };
   var EXAMPLE_GOAL = { id:'goal_example_emergency', example:true, name:'Emergency fund', target:5000, saved:1200 };
-  var EXAMPLE_ACCOUNTS = { bank: 4200, cash: 150 };
+  var EXAMPLE_ACCOUNTS = { bank: 4200, savings: 2000, cash: 150 };
 
   /* ================= storage abstraction ================= */
   function refreshAll(){ render(); }
@@ -627,7 +630,7 @@
     db.doc('meta/init').get().then(function(snap){
       if (snap.exists) return;
       db.doc('meta/init').set({ seededAt: Date.now() });
-      db.doc('meta/accounts').set({ bank:{ name:'Bank Account', opening: EXAMPLE_ACCOUNTS.bank }, cash:{ name:'Cash on Hand', opening: EXAMPLE_ACCOUNTS.cash } });
+      db.doc('meta/accounts').set({ bank:{ name:'Current Account', opening: EXAMPLE_ACCOUNTS.bank }, savings:{ name:'Savings Account', opening: EXAMPLE_ACCOUNTS.savings }, cash:{ name:'Cash on Hand', opening: EXAMPLE_ACCOUNTS.cash } });
       buildExampleTransactions().forEach(function(tx){
         var id = tx.id; var body = Object.assign({}, tx); delete body.id;
         db.collection('transactions').doc(id).set(body);
@@ -641,6 +644,7 @@
 
   function seedExamples(){
     cache.accounts.bank.opening = EXAMPLE_ACCOUNTS.bank;
+    cache.accounts.savings.opening = EXAMPLE_ACCOUNTS.savings;
     cache.accounts.cash.opening = EXAMPLE_ACCOUNTS.cash;
     cache.transactions = buildExampleTransactions();
     cache.budgets = {};
@@ -681,11 +685,12 @@
   }
 
   /* ---- writers ---- */
-  function saveAccounts(bankName,bankOpening,cashName,cashOpening){
+  function saveAccounts(bankName,bankOpening,savingsName,savingsOpening,cashName,cashOpening){
     cache.accounts.bank.name = bankName; cache.accounts.bank.opening = bankOpening;
+    cache.accounts.savings.name = savingsName; cache.accounts.savings.opening = savingsOpening;
     cache.accounts.cash.name = cashName; cache.accounts.cash.opening = cashOpening;
     if (usingLocal){ saveLocal(); render(); return; }
-    if (db) db.doc('meta/accounts').set({ bank:{name:bankName,opening:bankOpening}, cash:{name:cashName,opening:cashOpening} });
+    if (db) db.doc('meta/accounts').set({ bank:{name:bankName,opening:bankOpening}, savings:{name:savingsName,opening:savingsOpening}, cash:{name:cashName,opening:cashOpening} });
   }
   function saveCategories(){
     if (usingLocal){ saveLocal(); render(); return; }
@@ -736,7 +741,7 @@
   function resetAllData(){
     if (usingLocal){
       cache.transactions = []; cache.budgets = {}; cache.goals = [];
-      cache.accounts = { bank:{name:'Bank Account',opening:0}, cash:{name:'Cash on Hand',opening:0} };
+      cache.accounts = { bank:{name:'Current Account',opening:0}, savings:{name:'Savings Account',opening:0}, cash:{name:'Cash on Hand',opening:0} };
       cache.rules.keywordMap = {}; seedKeywordsIfEmpty();
       saveLocal(); render(); return;
     }
@@ -744,7 +749,7 @@
     db.collection('transactions').get().then(function(qs){ qs.docs.forEach(function(d){ db.collection('transactions').doc(d.id)['delete'](); }); });
     db.collection('budgets').get().then(function(qs){ qs.docs.forEach(function(d){ db.collection('budgets').doc(d.id)['delete'](); }); });
     db.collection('goals').get().then(function(qs){ qs.docs.forEach(function(d){ db.collection('goals').doc(d.id)['delete'](); }); });
-    db.doc('meta/accounts').set({ bank:{name:'Bank Account',opening:0}, cash:{name:'Cash on Hand',opening:0} });
+    db.doc('meta/accounts').set({ bank:{name:'Current Account',opening:0}, savings:{name:'Savings Account',opening:0}, cash:{name:'Cash on Hand',opening:0} });
   }
 
   /* ================= categorization engine ================= */
@@ -898,11 +903,12 @@
     var now = new Date();
     var mKey = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
     var totals = periodTotals(mKey);
-    var bank = accountBalance('bank'), cash = accountBalance('cash');
+    var bank = accountBalance('bank'), savings = accountBalance('savings'), cash = accountBalance('cash');
     var tiles = [
-      { label:'Bank balance', value: fmtMoney(bank) },
+      { label:'Current balance', value: fmtMoney(bank) },
+      { label:'Savings balance', value: fmtMoney(savings) },
       { label:'Cash on hand', value: fmtMoney(cash) },
-      { label:'Total balance', value: fmtMoney(bank+cash) },
+      { label:'Total balance', value: fmtMoney(bank+savings+cash) },
       { label:'Income this month', value: fmtMoney(totals.income), cls:'good' },
       { label:'Expenses this month', value: fmtMoney(totals.expense), cls:'bad' },
       { label:'Net this month', value: fmtMoney(totals.net), cls: totals.net>=0?'good':'bad' }
@@ -977,7 +983,7 @@
     return '<tr><td class="num">'+t.date+'</td><td><span class="desc-main">'+desc+'</span>'+chips+sub+'</td><td>'+cat+'</td><td>'+acct+'</td>'+
       '<td class="amt num '+amtCls+'">'+sign+fmtMoney(t.amount)+'</td>'+actions+'</tr>';
   }
-  function accLabel(which){ return which==='bank' ? esc(cache.accounts.bank.name||'Bank') : which==='cash' ? esc(cache.accounts.cash.name||'Cash') : '—'; }
+  function accLabel(which){ return which==='bank' ? esc(cache.accounts.bank.name||'Current') : which==='savings' ? esc(cache.accounts.savings.name||'Savings') : which==='cash' ? esc(cache.accounts.cash.name||'Cash') : '—'; }
 
   /* ---- ledger ---- */
   function renderLedger(){
@@ -1127,6 +1133,8 @@
   function renderSettings(){
     document.getElementById('accBankName').value = cache.accounts.bank.name;
     document.getElementById('accBankOpening').value = cache.accounts.bank.opening;
+    document.getElementById('accSavingsName').value = cache.accounts.savings.name;
+    document.getElementById('accSavingsOpening').value = cache.accounts.savings.opening;
     document.getElementById('accCashName').value = cache.accounts.cash.name;
     document.getElementById('accCashOpening').value = cache.accounts.cash.opening;
 
@@ -1349,8 +1357,10 @@
   document.getElementById('formAccounts').addEventListener('submit', function(e){
     e.preventDefault();
     saveAccounts(
-      document.getElementById('accBankName').value || 'Bank Account',
+      document.getElementById('accBankName').value || 'Current Account',
       parseFloat(document.getElementById('accBankOpening').value)||0,
+      document.getElementById('accSavingsName').value || 'Savings Account',
+      parseFloat(document.getElementById('accSavingsOpening').value)||0,
       document.getElementById('accCashName').value || 'Cash on Hand',
       parseFloat(document.getElementById('accCashOpening').value)||0
     );
@@ -1390,7 +1400,7 @@
 
   function subscribeDb(){
     db.doc('meta/accounts').onSnapshot(function(snap){
-      if (snap.exists){ var d = snap.data(); cache.accounts.bank = d.bank || cache.accounts.bank; cache.accounts.cash = d.cash || cache.accounts.cash; render(); }
+      if (snap.exists){ var d = snap.data(); cache.accounts.bank = d.bank || cache.accounts.bank; cache.accounts.savings = d.savings || cache.accounts.savings; cache.accounts.cash = d.cash || cache.accounts.cash; render(); }
     }, function(){});
     db.doc('meta/categories').onSnapshot(function(snap){
       if (snap.exists){ var d = snap.data(); if (d.categories) cache.categories = d.categories; if (d.buckets) cache.buckets = d.buckets; render(); }
