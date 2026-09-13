@@ -1447,6 +1447,7 @@
     var saved = loadLocal();
     if (saved){
       cache = saved;
+      if (!cache.accounts.savings) cache.accounts.savings = { name:'Savings Account', opening:0 };
       seedKeywordsIfEmpty();
     } else {
       seedExamples();
