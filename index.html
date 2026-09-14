@@ -474,6 +474,7 @@
             <img class="receipt-thumb" id="txReceiptThumb" hidden alt="Receipt preview" data-view-receipt-preview>
             <input type="file" accept="image/*" capture="environment" id="txReceiptInput" style="max-width:200px;">
             <button type="button" class="btn btn-ghost btn-sm" id="btnRemoveReceipt" hidden>Remove</button>
+            <button type="button" class="btn btn-sm" id="btnScanReceipt" hidden>✨ Scan &amp; fill</button>
           </div>
           <div class="receipt-status" id="txReceiptStatus"></div>
         </div>
@@ -570,7 +571,7 @@
   }
 
   /* ================= state ================= */
-  var db = null, downloadsCap = null;
+  var db = null, downloadsCap = null, sampleCap = null;
   var usingLocal = false;
   var cache = {
     accounts: { bank:{ name:'Current Account', opening:0 }, savings:{ name:'Savings Account', opening:0 }, cash:{ name:'Cash on Hand', opening:0 } },
@@ -1176,12 +1177,17 @@
   /* ================= modal ================= */
   var txType = 'expense';
   var currentReceiptDataUrl = null;
+  var currentReceiptFile = null;
+  var sampleImagesOk = false;
   function setReceiptPreview(dataUrl){
     currentReceiptDataUrl = dataUrl || null;
     var thumb = document.getElementById('txReceiptThumb');
     var removeBtn = document.getElementById('btnRemoveReceipt');
     if (currentReceiptDataUrl){ thumb.src = currentReceiptDataUrl; thumb.hidden = false; removeBtn.hidden = false; }
     else { thumb.hidden = true; thumb.src = ''; removeBtn.hidden = true; }
+  }
+  function updateScanAvailability(){
+    document.getElementById('btnScanReceipt').hidden = !(sampleCap && sampleImagesOk && currentReceiptFile);
   }
   function openTxModal(existing){
     editingTxId = existing ? existing.id : null;
@@ -1201,7 +1207,9 @@
     document.getElementById('txReceiptInput').value = '';
     document.getElementById('txReceiptStatus').textContent = '';
     document.getElementById('txReceiptStatus').className = 'receipt-status';
+    currentReceiptFile = null;
     setReceiptPreview(existing ? existing.receiptPhoto : null);
+    updateScanAvailability();
     document.getElementById('txModalBackdrop').hidden = false;
     document.getElementById('txMerchant').focus();
   }
@@ -1258,18 +1266,70 @@
     if (!file) return;
     status.className = 'receipt-status'; status.textContent = 'Processing photo…';
     var input = this;
+    currentReceiptFile = file;
+    updateScanAvailability();
     compressImageFile(file).then(function(dataUrl){
       status.textContent = '';
       setReceiptPreview(dataUrl);
     }).catch(function(err){
       status.className = 'receipt-status err'; status.textContent = err.message || 'Could not process that photo.';
       input.value = '';
+      currentReceiptFile = null;
+      updateScanAvailability();
     });
   });
   document.getElementById('btnRemoveReceipt').addEventListener('click', function(){
     document.getElementById('txReceiptInput').value = '';
     document.getElementById('txReceiptStatus').textContent = '';
+    currentReceiptFile = null;
     setReceiptPreview(null);
+    updateScanAvailability();
+  });
+  document.getElementById('btnScanReceipt').addEventListener('click', function(){
+    if (!sampleCap || !currentReceiptFile) return;
+    var status = document.getElementById('txReceiptStatus');
+    var btn = this;
+    btn.disabled = true;
+    status.className = 'receipt-status'; status.textContent = 'Reading receipt…';
+    var expenseCats = cache.categories.expense.join(', ');
+    var prompt = 'Look at this receipt photo and extract these fields. Reply with ONLY a JSON object, no other text:\n' +
+      '{"amount": number or null, "merchant": string or null, "date": "YYYY-MM-DD" or null, "category": string or null, "type": "expense" or "income", "account": "cash" or null}\n' +
+      '- amount: the final total paid, digits only, no currency symbol.\n' +
+      '- merchant: the store/business name, short.\n' +
+      '- date: the date printed on the receipt in YYYY-MM-DD; null if unreadable. Never invent a date.\n' +
+      '- category: pick the single best match from exactly this list, verbatim: [' + expenseCats + ']. Use "Other Expense" if nothing fits.\n' +
+      '- type: "expense" unless this is clearly a refund/return credit receipt, then "income".\n' +
+      '- account: "cash" only if the receipt explicitly shows a cash payment/tender line; otherwise null.';
+    sampleCap.json(prompt, { images: currentReceiptFile, modelTier: 'quick' }).then(function(data){
+      data = data || {};
+      if (data.type === 'income' || data.type === 'expense'){
+        txType = data.type;
+        document.querySelectorAll('#txTypeSwitch button').forEach(function(b){ b.classList.toggle('active', b.dataset.type===txType); });
+        updateTxFormVisibility();
+        populateTxCategorySelect();
+      }
+      if (typeof data.amount === 'number' && data.amount > 0) document.getElementById('txAmount').value = data.amount;
+      if (data.merchant) document.getElementById('txMerchant').value = String(data.merchant).slice(0,120);
+      if (data.date && /^\d{4}-\d{2}-\d{2}$/.test(data.date)) document.getElementById('txDate').value = data.date;
+      if (data.category && isCategoryOfType(data.category, txType)) document.getElementById('txCategory').value = data.category;
+      if (data.account === 'cash') document.getElementById('txAccount').value = 'cash';
+      status.className = 'receipt-status'; status.textContent = 'Scanned — review the fields below and save.';
+      btn.disabled = false;
+    }).catch(function(err){
+      btn.disabled = false;
+      var code = err && err.code;
+      if (code==='not_granted' || code==='sampling_disabled' || code==='not_declared' || code==='capability_disabled' || code==='capability_removed' || code==='images_unavailable'){
+        sampleCap = null; updateScanAvailability();
+        status.className = 'receipt-status err'; status.textContent = 'Receipt scanning isn\'t available here.';
+        return;
+      }
+      var msg = code==='rate_limited' ? 'Too many requests right now — try again shortly.' :
+        code==='image_rejected' ? 'That photo could not be read — try a clearer shot.' :
+        code==='invalid_json' || code==='empty_completion' ? 'Could not make out the receipt — try a clearer photo.' :
+        code==='refused' ? 'Could not analyze this photo.' :
+        'Something went wrong scanning the receipt — try again.';
+      status.className = 'receipt-status err'; status.textContent = msg;
+    });
   });
 
   document.getElementById('txForm').addEventListener('submit', function(e){
@@ -1449,8 +1509,11 @@
     switchTab('dashboard');
     render();
     if (window.claude && typeof window.claude.use === 'function'){
-      Promise.all([window.claude.use('db'), window.claude.use('downloads')]).then(function(res){
-        db = res[0]; downloadsCap = res[1];
+      Promise.all([window.claude.use('db'), window.claude.use('downloads'), window.claude.use('sample')]).then(function(res){
+        db = res[0]; downloadsCap = res[1]; sampleCap = res[2];
+        if (sampleCap){
+          sampleCap.limits().then(function(l){ sampleImagesOk = !!(l && l.images); updateScanAvailability(); }).catch(function(){ sampleImagesOk = false; });
+        }
         if (db){
           usingLocal = false;
           setSync('synced');
