@@ -249,6 +249,15 @@
   .suggestion{ font-size:12px; color:var(--accent); margin-top:2px; cursor:pointer; }
   .suggestion:hover{ text-decoration:underline; }
 
+  tr.clickable{ cursor:pointer; }
+  .hint-tap{ font-size:12px; color:var(--ink-faint); margin:0 0 8px; }
+  .toast{
+    position:fixed; left:50%; bottom:24px; transform:translateX(-50%); z-index:60;
+    background:var(--ink); color:var(--paper); padding:10px 14px; border-radius:10px;
+    display:flex; gap:12px; align-items:center; font-size:13px; box-shadow:var(--shadow); max-width:calc(100% - 32px);
+  }
+  .toast .btn{ background:transparent; color:var(--paper); border-color:var(--paper); }
+
   /* ---------- receipt photo ---------- */
   .receipt-picker{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .receipt-thumb{
@@ -334,6 +343,7 @@
     </div>
     <div class="card">
       <div class="card-head"><h3>Recent activity</h3><button class="btn btn-ghost btn-sm" data-tab-link="ledger">View full ledger →</button></div>
+      <p class="hint-tap no-print">Tap any transaction to edit or delete it.</p>
       <div class="table-wrap"><table><tbody id="recentBody"></tbody></table></div>
     </div>
   </section>
@@ -350,6 +360,7 @@
         <button class="btn btn-sm" id="btnPrintLedger" style="align-self:flex-end;">Print</button>
       </div>
       <div class="print-title" id="ledgerPrintTitle"></div>
+      <p class="hint-tap no-print">Made a mistake? Tap any transaction to correct or delete it.</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Account</th><th style="text-align:right;">Amount</th><th class="col-actions"></th></tr></thead>
@@ -480,12 +491,17 @@
         </div>
       </div>
       <div class="modal-actions">
-        <button type="button" class="btn btn-ghost" id="btnCancelTx">Cancel</button>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn btn-ghost" id="btnCancelTx">Cancel</button>
+          <button type="button" class="btn btn-danger" id="btnDeleteTx" hidden>Delete</button>
+        </div>
         <button type="submit" class="btn btn-primary">Save transaction</button>
       </div>
     </form>
   </div>
 </div>
+
+<div class="toast no-print" id="toast" hidden><span id="toastMsg"></span><button type="button" class="btn btn-sm" id="toastUndo">Undo</button></div>
 
 <div class="modal-backdrop" id="receiptViewerBackdrop" hidden>
   <div class="modal receipt-viewer" style="max-width:520px;">
@@ -727,6 +743,27 @@
     if (usingLocal){ cache.transactions = cache.transactions.filter(function(t){ return t.id!==id; }); saveLocal(); render(); return; }
     if (db) db.collection('transactions').doc(id)['delete']();
   }
+  function restoreTransaction(tx){
+    if (usingLocal){ cache.transactions.push(tx); saveLocal(); render(); return; }
+    if (db){ var body = Object.assign({}, tx); var id = body.id; delete body.id; db.collection('transactions').doc(id).set(body); }
+  }
+  var toastTimer = null;
+  function showToast(msg, onUndo){
+    var box = document.getElementById('toast');
+    document.getElementById('toastMsg').textContent = msg;
+    box.hidden = false;
+    document.getElementById('toastUndo').onclick = function(){ box.hidden = true; clearTimeout(toastTimer); onUndo(); };
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ box.hidden = true; }, 9000);
+  }
+  function deleteWithUndo(id){
+    var t = cache.transactions.find(function(x){ return x.id===id; });
+    if (!t) return;
+    var snapshot = Object.assign({}, t);
+    deleteTransaction(id);
+    showToast('Transaction deleted', function(){ restoreTransaction(snapshot); });
+  }
+
   function setBudget(category, limit){
     if (usingLocal){ cache.budgets[category] = { limit: limit }; saveLocal(); render(); return; }
     if (db) db.collection('budgets').doc(category).set({ limit: limit });
@@ -990,7 +1027,7 @@
     var chips = (t.example ? '<span class="chip example">Example</span>' : '') + (rec ? '<span class="chip">↻ Recurring</span>' : '') + (anomaly ? '<span class="chip warn">⚠ Unusual</span>' : '') +
       (t.receiptPhoto ? '<button type="button" class="receipt-chip-btn" data-view-receipt="'+t.id+'">📷 Receipt</button>' : '');
     var actions = withActions ? '<td class="row-actions col-actions"><button class="icon-btn" data-edit="'+t.id+'" title="Edit">✎</button><button class="icon-btn" data-del="'+t.id+'" title="Delete">✕</button></td>' : '<td class="col-actions"></td>';
-    return '<tr><td class="num">'+t.date+'</td><td><span class="desc-main">'+desc+'</span>'+chips+sub+'</td><td>'+cat+'</td><td>'+acct+'</td>'+
+    return '<tr class="clickable" data-open-tx="'+t.id+'"><td class="num">'+t.date+'</td><td><span class="desc-main">'+desc+'</span>'+chips+sub+'</td><td>'+cat+'</td><td>'+acct+'</td>'+
       '<td class="amt num '+amtCls+'">'+sign+fmtMoney(t.amount)+'</td>'+actions+'</tr>';
   }
   function accLabel(which){ return which==='bank' ? esc(cache.accounts.bank.name||'Current') : which==='savings' ? esc(cache.accounts.savings.name||'Savings') : which==='cash' ? esc(cache.accounts.cash.name||'Cash') : '—'; }
@@ -1193,6 +1230,7 @@
     editingTxId = existing ? existing.id : null;
     txType = existing ? existing.type : 'expense';
     document.getElementById('txModalTitle').textContent = existing ? 'Edit transaction' : 'Add transaction';
+    document.getElementById('btnDeleteTx').hidden = !existing;
     document.querySelectorAll('#txTypeSwitch button').forEach(function(b){ b.classList.toggle('active', b.dataset.type===txType); });
     updateTxFormVisibility();
     populateTxCategorySelect();
@@ -1341,12 +1379,14 @@
     if (txType==='transfer'){
       var from = document.getElementById('txFrom').value, to = document.getElementById('txTo').value;
       if (from===to) { alert('Choose two different accounts for a transfer.'); return; }
-      var tx = { type:'transfer', date:date, amount:amount, fromAccount:from, toAccount:to, merchant:merchant||'Transfer', note:'' , account:null, category:null, receiptPhoto: currentReceiptDataUrl||null};
+      var prevNote = editingTxId ? ((cache.transactions.find(function(x){ return x.id===editingTxId; })||{}).note||'') : '';
+      var tx = { type:'transfer', date:date, amount:amount, fromAccount:from, toAccount:to, merchant:merchant||'Transfer', note:prevNote , account:null, category:null, receiptPhoto: currentReceiptDataUrl||null};
       if (editingTxId) updateTransaction(editingTxId, tx); else addTransaction(tx);
     } else {
       var category = document.getElementById('txCategory').value;
       var account = document.getElementById('txAccount').value;
-      var tx2 = { type:txType, date:date, amount:amount, account:account, category:category, merchant:merchant, note:'', receiptPhoto: currentReceiptDataUrl||null };
+      var prevNote2 = editingTxId ? ((cache.transactions.find(function(x){ return x.id===editingTxId; })||{}).note||'') : '';
+      var tx2 = { type:txType, date:date, amount:amount, account:account, category:category, merchant:merchant, note:prevNote2, receiptPhoto: currentReceiptDataUrl||null };
       if (editingTxId) updateTransaction(editingTxId, tx2); else addTransaction(tx2);
       if (merchant) learnFromTransaction(merchant, category);
     }
@@ -1357,7 +1397,7 @@
     var edit = e.target.closest('[data-edit]');
     if (edit){ var t = cache.transactions.find(function(x){ return x.id===edit.dataset.edit; }); if (t) openTxModal(t); return; }
     var del = e.target.closest('[data-del]');
-    if (del){ if (confirm('Delete this transaction?')) deleteTransaction(del.dataset.del); return; }
+    if (del){ deleteWithUndo(del.dataset.del); return; }
     var view = e.target.closest('[data-view-receipt]');
     if (view){
       var vt = cache.transactions.find(function(x){ return x.id===view.dataset.viewReceipt; });
@@ -1367,6 +1407,16 @@
       }
       return;
     }
+    var row = e.target.closest('tr[data-open-tx]');
+    if (row && !e.target.closest('button')){
+      var rt = cache.transactions.find(function(x){ return x.id===row.dataset.openTx; });
+      if (rt) openTxModal(rt);
+    }
+  });
+  document.getElementById('btnDeleteTx').addEventListener('click', function(){
+    var id = editingTxId;
+    closeTxModal();
+    if (id) deleteWithUndo(id);
   });
   document.getElementById('btnCloseReceiptViewer').addEventListener('click', function(){
     document.getElementById('receiptViewerBackdrop').hidden = true;
